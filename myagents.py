@@ -18,6 +18,9 @@ class MyDumbAgent():
     def swap(self) -> int:
         return randint(0,1)
 
+    def select_action(self, observation, reward, termination, truncation, info) -> int:
+        return self.place()
+
 class MyABitSmarterAgent():
     def __init__(self, env) -> None:
         self.env = env
@@ -77,3 +80,6 @@ class MyABitSmarterAgent():
                     return newX * self.env.board_size + newY
 
         return self.begin()
+
+    def select_action(self, observation, reward, termination, truncation, info) -> int:
+        return self.place()
