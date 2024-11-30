@@ -1,6 +1,40 @@
 from random import randint
 import ourhexenv
 
+import torch
+from torch import nn
+import torch.nn.functional as f
+
+class DQN(nn.Module):
+    def __init__(self, observation_space, action_space, hidden=256) -> None:
+        super(DQN, self).__init__()
+
+        self.fc1 = nn.Linear(observation_space, hidden)
+        self.fc2 = nn.Linear(hidden, action_space)
+
+    def forward(self, state):
+        x = f.relu(self.fc1(state))
+        return self.fc2(x)
+    
+    def get_valid_action(self, state, board):
+        action_probs = self.forward(state)
+        valid_actions = []
+        for i in range(len(action_probs)):
+            row = i // 11
+            col = i % 11
+
+            if row < 11 and col < 11:
+                if board[row][col] == 0:  # Empty space
+                    valid_actions.append(i)
+
+        if not valid_actions:
+            return action_probs.argmax().item()
+
+        valid_action_probs = action_probs[valid_actions]
+        #print("Valid action probabilities: {valid_action_probs}")
+        return valid_actions[valid_action_probs.argmax().item()]
+    
+
 class MyDumbAgent():
     def __init__(self, env) -> None:
         self.env = env
@@ -83,3 +117,12 @@ class MyABitSmarterAgent():
 
     def select_action(self, observation, reward, termination, truncation, info) -> int:
         return self.place()
+
+
+if __name__ == '__main__':
+    observation_space = 121
+    action_space = 122
+    net = DQN(observation_space,action_space)
+    state = torch.randn(1, observation_space)
+    output = net(state)
+    print(output)
