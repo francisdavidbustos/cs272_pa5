@@ -5,6 +5,7 @@ from myagents import MyDumbAgent, MyABitSmarterAgent, DQN
 import random
 
 import torch
+from torch import nn
 import yaml
 import numpy as np
 
@@ -22,6 +23,12 @@ class Agent:
         self.epsilon_init = hyperparameters['epsilon_init']
         self.epsilon_decay = hyperparameters['epsilon_decay']
         self.epsilon_min = hyperparameters['epsilon_min']
+        self.network_sync_rate = hyperparameters['network_sync_rate']
+        self.learning_rate_a = hyperparameters['learning_rate_a']
+        self.discount_factor_g = hyperparameters['discount_factor_g']
+
+        self.loss_fn = nn.MSELoss()
+        self.optimizer = None
 
     def run(self, is_training=True,render=False):    
         env = OurHexGame(board_size=11,render_mode=None)
@@ -48,9 +55,21 @@ class Agent:
 
         smart_agent_player_id = random.choice(env.agents)
 
+
+        replay_memory = ReplayMemory(self.replay_memory_size)
+        epsilon = self.epsilon_init
         if is_training:
-            replay_memory = ReplayMemory(self.replay_memory_size)
-            epsilon = self.epsilon_init
+            target_dqn = DQN(num_states,num_actions)
+            target_dqn.load_state_dict(policy_dqn.state_dict())
+
+            step=0
+
+            self.optimizer = torch.optim.Adam(policy_dqn.parameters(),lr=self.learning_rate_a)
+        else:
+            checkpoint = torch.load('g13agent.pth')
+            target_dqn = DQN(num_states,num_actions)
+            policy_dqn.load_state_dict(checkpoint['policy_dqn_state_dict'])
+            target_dqn.load_state_dict(checkpoint['target_dqn_state_dict'])
 
         for episode in range(1000):
             env.reset()
@@ -102,6 +121,7 @@ class Agent:
 
                     if is_training:
                         replay_memory.push((state, action, observation, reward, termination))
+                        step += 1
 
                     state = observation
                     #env.render()
@@ -110,6 +130,34 @@ class Agent:
             epsilon = max(epsilon * self.epsilon_decay, self.epsilon_min)
             epsilon_history.append(epsilon)
 
+            if len(replay_memory)>self.mini_batch_size:
+                mini_batch = replay_memory.sample(self.mini_batch_size)
+                self.optimize(mini_batch, policy_dqn, target_dqn)
+
+                if step > self.network_sync_rate:
+                    target_dqn.load_state_dict(policy_dqn.state_dict())
+                    step = 0
+        torch.save({
+        'policy_dqn_state_dict': policy_dqn.state_dict(),
+        'target_dqn_state_dict': target_dqn.state_dict(),
+    }, 'g13agent.pth')
+
+    def optimize(self, mini_batch, policy_dqn, target_dqn):
+        for state, action, observation, reward, termination in mini_batch:
+            if termination:
+                target_q = reward
+            else:
+                with torch.no_grad():
+                    target_q = reward + self.discount_factor_g * target_dqn(observation).max()
+            
+            current_q = policy_dqn(state)[action]
+
+            loss = self.loss_fn(current_q, target_q)
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
 if __name__ == '__main__':
     agent = Agent('hexgame1')
-    agent.run(is_training=True, render=False)
+    agent.run(is_training=False, render=False)
