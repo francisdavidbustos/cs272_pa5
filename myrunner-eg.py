@@ -12,7 +12,7 @@ import numpy as np
 from experience_replay import ReplayMemory 
 
 
-class Agent:
+class G13Agent:
     def __init__(self, hyperparameter_set) -> None:
         with open('cs272_pa5/hyperparameters.yml', 'r') as file:
             all_hyperparameters_sets = yaml.safe_load(file)
@@ -30,8 +30,25 @@ class Agent:
         self.loss_fn = nn.MSELoss()
         self.optimizer = None
 
-    def run(self, is_training=True,render=False):    
-        env = OurHexGame(board_size=11,render_mode=None)
+    '''
+        Runs the agent and declares if it is in a testing and sparse environment or not
+    '''
+    def run(self, is_training=True, sparse=True, render=False):
+
+        # Initialization for visuals and rewards
+        if render == False:
+            env = OurHexGame(board_size=11, sparse_flag=sparse, render_mode=None)
+            if sparse == True:
+                print('Sparse rewards')
+            else:
+                print('Dense rewards')
+        else:
+            env = OurHexGame(board_size=11, sparse_flag=sparse)
+            if sparse == True:
+                print('Sparse rewards')
+            else:
+                print('Dense rewards')
+
 
         # player 1
         #gXXagent = GXXAgent(env)
@@ -40,48 +57,64 @@ class Agent:
         #gYYagent = GYYAgent(env)
         gYYagent = MyDumbAgent(env)
 
-        #print(env.observation_space("player_1"))
-        #print(env.action_space("player_1"))
-        #print(env.observation_space("player_2"))
-        #print(env.action_space("player_2"))
+        '''
+        print(env.observation_space("player_1"))
+        print(env.action_space("player_1"))
+        print(env.observation_space("player_2"))
+        print(env.action_space("player_2"))
+        '''
 
+        # Board size is hardcoded, so actions and states are hardcoded
         num_states = 11*11+1
         num_actions = 122
 
         rewards_per_episode = []
         epsilon_history = []
 
-        policy_dqn = DQN(num_states,num_actions)
+        policy_dqn = DQN(num_states,num_actions)  # DQN to learn
+        target_dqn = DQN(num_states,num_actions)  # DQN to update stability
 
-        smart_agent_player_id = random.choice(env.agents)
-
-
-        replay_memory = ReplayMemory(self.replay_memory_size)
+        replay_memory = ReplayMemory(self.replay_memory_size)  # Store transitions
         epsilon = self.epsilon_init
+
         if is_training:
-            target_dqn = DQN(num_states,num_actions)
+            # Update old model if available, otherwise create a new one
+            try:
+                checkpoint = torch.load('cs272_pa5/g13agent.pt')
+                policy_dqn.load_state_dict(checkpoint['policy_dqn_state_dict'])
+            except:
+                pass
             target_dqn.load_state_dict(policy_dqn.state_dict())
-
-            step=0
-
+            step = 0
             self.optimizer = torch.optim.Adam(policy_dqn.parameters(),lr=self.learning_rate_a)
         else:
-            checkpoint = torch.load('g13agent.pth')
-            target_dqn = DQN(num_states,num_actions)
-            policy_dqn.load_state_dict(checkpoint['policy_dqn_state_dict'])
-            target_dqn.load_state_dict(checkpoint['target_dqn_state_dict'])
+            try:
+                checkpoint = torch.load('cs272_pa5/g13agent.pt')
+                policy_dqn.load_state_dict(checkpoint['policy_dqn_state_dict'])
+                target_dqn.load_state_dict(checkpoint['target_dqn_state_dict'])
+            except:
+                target_dqn.load_state_dict(policy_dqn.state_dict())
 
-        for episode in range(1000):
+        # Set episode count based on if training or not
+        if is_training:
+            epr = 10000
+        else:
+            epr = 1
+
+        for episode in range(epr):
             env.reset()
             termination = False
             episode_reward = 0.0
             while not termination:
                 for agent in env.agent_iter():
+                    pid = 0 if agent == 'player_1' else 1
+
                     state = env.observe(agent)
                     state = torch.tensor(np.concatenate([
-        state["observation"].flatten(),  # Flatten the grid
-        [state["pie_rule_used"]]  # Include the discrete flag
-    ]), dtype=torch.float, device='cpu')
+                        state["observation"].flatten(),  # Flatten the grid
+                        [state["pie_rule_used"]],  # Include the discrete flag
+                        ]), dtype=torch.float, device='cpu')
+
                     observation, reward, termination, truncation, info = env.last()
                     
                     if termination or truncation:
@@ -89,24 +122,24 @@ class Agent:
                         break
 
                     if is_training and random.random() < epsilon:
+                        '''
                         if agent == 'player_1':
                             action = gXXagent.select_action(observation, reward, termination, truncation, info)
-                            #action = gXXagent.env.action_space.sample()
                             action = torch.tensor(action, dtype=torch.int64, device='cpu')
                             action = action.item()
                         else:
                             action = gYYagent.select_action(observation, reward, termination, truncation, info)
-                            #action = gYYagent.env.action_space.sample()
                             action = torch.tensor(action, dtype=torch.int64, device='cpu')
                             action = action.item()
+                        '''
+                        action = gXXagent.select_action(observation,reward,termination,truncation,info)
+                        action = torch.tensor(action,dtype=torch.int64,device='cpu')
+                        action = action.item()
                     else:
-                        if agent == 'player_1':
-                            with torch.no_grad():
-                                action = policy_dqn.get_valid_action(state, env.board)
-                        else:
-                            with torch.no_grad():
-                                #action = policy_dqn(state.unsqueeze(dim=0)).squeeze().argmax()
-                                action = policy_dqn.get_valid_action(state, env.board)
+                        if agent == 'player_2':
+                            action = gXXagent.select_action(observation, reward, termination, truncation, info)
+                        with torch.no_grad():
+                            action = policy_dqn.get_valid_action(state, env.board)
 
                     env.step(action)
                     observation, reward, termination, truncation, info = env.last()
@@ -114,9 +147,10 @@ class Agent:
                     episode_reward += reward
 
                     observation = torch.tensor(np.concatenate([
-        observation["observation"].flatten(),  # Flatten the grid
-        [observation["pie_rule_used"]]  # Include the discrete flag
-    ]), dtype=torch.float, device='cpu')
+                        observation["observation"].flatten(),  # Flatten the grid
+                        [observation["pie_rule_used"]]  # Include the discrete flag
+                        ]), dtype=torch.float, device='cpu')
+
                     reward = torch.tensor(reward, dtype=torch.float, device='cpu')
 
                     if is_training:
@@ -137,11 +171,15 @@ class Agent:
                 if step > self.network_sync_rate:
                     target_dqn.load_state_dict(policy_dqn.state_dict())
                     step = 0
-        torch.save({
-        'policy_dqn_state_dict': policy_dqn.state_dict(),
-        'target_dqn_state_dict': target_dqn.state_dict(),
-    }, 'g13agent.pth')
+        if is_training:
+            torch.save({
+                'policy_dqn_state_dict': policy_dqn.state_dict(),
+                'target_dqn_state_dict': target_dqn.state_dict(),
+                }, 'cs272_pa5/g13agent.pt')
 
+    '''
+        DQN Optimization based on mini-batch
+    '''
     def optimize(self, mini_batch, policy_dqn, target_dqn):
         for state, action, observation, reward, termination in mini_batch:
             if termination:
@@ -159,5 +197,8 @@ class Agent:
             self.optimizer.step()
 
 if __name__ == '__main__':
-    agent = Agent('hexgame1')
-    agent.run(is_training=False, render=False)
+    agent = G13Agent('hexgame1')
+    agent.run(is_training=True,sparse=True,render=False)
+    agent.run(is_training=True,sparse=False,render=False)
+    agent.run(is_training=False,sparse=True,render=True)
+    agent.run(is_training=False,sparse=False,render=True)

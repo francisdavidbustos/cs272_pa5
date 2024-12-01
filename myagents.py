@@ -5,20 +5,37 @@ import torch
 from torch import nn
 import torch.nn.functional as f
 
+import numpy as np
+import math
+
 class DQN(nn.Module):
+    '''
+        Initialization
+    '''
     def __init__(self, observation_space, action_space, hidden=256) -> None:
         super(DQN, self).__init__()
 
-        self.fc1 = nn.Linear(observation_space, hidden)
-        self.fc2 = nn.Linear(hidden, action_space)
+        self.fc1 = nn.Linear(observation_space, hidden)  # Connected layer 1
+        self.fc2 = nn.Linear(hidden, action_space)  # Connected layer 2
 
+        self.action_counts = np.zeros(action_space)  # UCB Exploration
+        self.state_visits = 0  # UCB Current State Visit Count
+
+    '''
+        Forward pass
+    '''
     def forward(self, state):
-        x = f.relu(self.fc1(state))
+        x = f.relu(self.fc1(state))  # ReLU transformation
         return self.fc2(x)
     
-    def get_valid_action(self, state, board):
-        action_probs = self.forward(state)
-        valid_actions = []
+    '''
+        Epsilon-greedy modified to UCB, where c is UCB's exploration constant
+    '''
+    def get_valid_action(self, state, board, c=0.8):
+        action_probs = self.forward(state)  # Q-value probabilities for each action
+        valid_actions = []  # List of valid actions
+
+        # All valid actions in the current board state
         for i in range(len(action_probs)):
             row = i // 11
             col = i % 11
@@ -31,9 +48,27 @@ class DQN(nn.Module):
             return action_probs.argmax().item()
 
         valid_action_probs = action_probs[valid_actions]
-        #print("Valid action probabilities: {valid_action_probs}")
-        return valid_actions[valid_action_probs.argmax().item()]
+        #return valid_actions[valid_action_probs.argmax().item()]
+
+        # UCB Implementation
+        ucb_values = []
+
+        for action in valid_actions:
+            q = valid_action_probs[valid_actions.index(action)].item()
+            ucb_term = c * math.sqrt(math.log(self.state_visits + 1)/(self.action_counts[action] +1))
+            ucb_values.append(q+ucb_term)
+
+        selected_action = valid_actions[np.argmax(ucb_values)]
+
+        self.action_counts[selected_action] += 1
+        self.state_visits +=1
+
+        return selected_action
     
+
+'''
+    PLACEHOLDERS FROM P4 FOR TESTING CLASS ENVIRONMENT
+'''
 
 class MyDumbAgent():
     def __init__(self, env) -> None:
