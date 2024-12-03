@@ -1,3 +1,7 @@
+'''
+    MOVE EVERYTHING TO DQN
+'''
+
 from ourhexenv import OurHexGame
 #from gXXagent import GXXAgent
 #from gYYagent import GYYAgent
@@ -13,22 +17,6 @@ from experience_replay import ReplayMemory
 
 
 class G13Agent:
-    def __init__(self, hyperparameter_set) -> None:
-        with open('cs272_pa5/hyperparameters.yml', 'r') as file:
-            all_hyperparameters_sets = yaml.safe_load(file)
-            hyperparameters = all_hyperparameters_sets[hyperparameter_set]
-
-        self.replay_memory_size = hyperparameters['replay_memory_size']
-        self.mini_batch_size = hyperparameters['mini_batch_size']
-        self.epsilon_init = hyperparameters['epsilon_init']
-        self.epsilon_decay = hyperparameters['epsilon_decay']
-        self.epsilon_min = hyperparameters['epsilon_min']
-        self.network_sync_rate = hyperparameters['network_sync_rate']
-        self.learning_rate_a = hyperparameters['learning_rate_a']
-        self.discount_factor_g = hyperparameters['discount_factor_g']
-
-        self.loss_fn = nn.MSELoss()
-        self.optimizer = None
 
     '''
         Runs the agent and declares if it is in a testing and sparse environment or not
@@ -97,7 +85,7 @@ class G13Agent:
 
         # Set episode count based on if training or not
         if is_training:
-            epr = 10000
+            epr = 1000
         else:
             epr = 1
 
@@ -138,8 +126,11 @@ class G13Agent:
                     else:
                         if agent == 'player_2':
                             action = gXXagent.select_action(observation, reward, termination, truncation, info)
-                        with torch.no_grad():
-                            action = policy_dqn.get_valid_action(state, env.board)
+                        else:
+                            action = policy_dqn.select_action(observation, reward, termination, truncation, info)
+                            with torch.no_grad():
+                                action = policy_dqn.get_valid_action(state, env.board)
+
 
                     env.step(action)
                     observation, reward, termination, truncation, info = env.last()
@@ -176,25 +167,6 @@ class G13Agent:
                 'policy_dqn_state_dict': policy_dqn.state_dict(),
                 'target_dqn_state_dict': target_dqn.state_dict(),
                 }, 'cs272_pa5/g13agent.pt')
-
-    '''
-        DQN Optimization based on mini-batch
-    '''
-    def optimize(self, mini_batch, policy_dqn, target_dqn):
-        for state, action, observation, reward, termination in mini_batch:
-            if termination:
-                target_q = reward
-            else:
-                with torch.no_grad():
-                    target_q = reward + self.discount_factor_g * target_dqn(observation).max()
-            
-            current_q = policy_dqn(state)[action]
-
-            loss = self.loss_fn(current_q, target_q)
-
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
 
 if __name__ == '__main__':
     agent = G13Agent('hexgame1')

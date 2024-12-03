@@ -8,6 +8,10 @@ import torch.nn.functional as f
 import numpy as np
 import math
 
+import yaml
+
+from experience_replay import ReplayMemory 
+
 class DQN(nn.Module):
     '''
         Initialization
@@ -47,6 +51,7 @@ class DQN(nn.Module):
         if not valid_actions:
             return action_probs.argmax().item()
 
+        #print(state)
         valid_action_probs = action_probs[valid_actions]
         #return valid_actions[valid_action_probs.argmax().item()]
 
@@ -64,7 +69,122 @@ class DQN(nn.Module):
         self.state_visits +=1
 
         return selected_action
+
+
+class G13Agent():
+
+    def __init__(self, env, hyperparameter_set, is_training = False) -> None:
+        with open('cs272_pa5/hyperparameters.yml', 'r') as file:
+            all_hyperparameters_sets = yaml.safe_load(file)
+            hyperparameters = all_hyperparameters_sets[hyperparameter_set]
+
+        self.replay_memory_size = hyperparameters['replay_memory_size']
+        self.mini_batch_size = hyperparameters['mini_batch_size']
+        self.epsilon_init = hyperparameters['epsilon_init']
+        self.epsilon_decay = hyperparameters['epsilon_decay']
+        self.epsilon_min = hyperparameters['epsilon_min']
+        self.network_sync_rate = hyperparameters['network_sync_rate']
+        self.learning_rate_a = hyperparameters['learning_rate_a']
+        self.discount_factor_g = hyperparameters['discount_factor_g']
+
+        self.replay_buffer = ReplayMemory(self.replay_memory_size)
+        self.step = 0
+
+        self.loss_fn = nn.MSELoss()
+        self.optimizer = None
+
+        self.env = env
+        self.is_training = is_training
+
+        self.dqn = DQN(122, 122)
+        self.tgt = DQN(122, 122)
+        
+        if is_training:
+            # Update old model if available, otherwise create a new one
+            try:
+                checkpoint = torch.load('cs272_pa5/g13agent.pt')
+                self.dqn.load_state_dict(checkpoint['policy_dqn_state_dict'])
+            except:
+                pass
+            self.tgt.load_state_dict(self.dqn.state_dict())
+            step = 0
+            self.optimizer = torch.optim.Adam(self.dqn.parameters(),lr=self.learning_rate_a)
+        else:
+            try:
+                checkpoint = torch.load('cs272_pa5/g13agent.pt')
+                self.dqn.load_state_dict(checkpoint['policy_dqn_state_dict'])
+                self.tgt.load_state_dict(checkpoint['target_dqn_state_dict'])
+            except:
+                self.tgt.load_state_dict(self.dqn.state_dict())
     
+    def select_action(self, observation, reward, termination, truncation, info):
+        if info['direction'] == 0:
+            agent = 'player_1'
+        else:
+            agent = 'player_2'
+        state = self.env.observe(agent)
+        state = torch.tensor(np.concatenate([
+            state["observation"].flatten(),  # Flatten the grid
+            [state["pie_rule_used"]],  # Include the discrete flag
+            ]), dtype=torch.float, device='cpu')
+        with torch.no_grad():
+            action = self.dqn.get_valid_action(state, self.env.board)
+        return action
+
+    def train(self, observation, reward, termination, truncation, info, action) -> None:
+        """
+        Train the agent on the given experience (observation, reward, etc.)
+        """
+
+        # Update target network periodically
+        if self.step % self.network_sync_rate == 0:
+            self.tgt.load_state_dict(self.dqn.state_dict())
+
+        # Process the state (this is already done in the runner, so you can directly use observation)
+        state = torch.tensor(np.concatenate([
+            observation["observation"].flatten(),
+            [observation["pie_rule_used"]],
+        ]), dtype=torch.float, device='cpu')
+
+        # Store the experience in the replay buffer with the action taken
+        next_state = torch.tensor(np.concatenate([
+            observation["observation"].flatten(),
+            [observation["pie_rule_used"]],
+        ]), dtype=torch.float, device='cpu')
+
+        self.replay_buffer.push((state, action, reward, next_state, termination))  # Add experience to buffer
+
+        # Sample mini-batch from replay buffer and optimize
+        if len(self.replay_buffer) > self.mini_batch_size:
+            mini_batch = self.replay_buffer.sample(self.mini_batch_size)
+            self.optimize(mini_batch, self.dqn, self.tgt)  # Optimize the Q-network with the mini-batch
+
+        # Decay epsilon for exploration
+        self.epsilon_init = max(self.epsilon_min, self.epsilon_init * self.epsilon_decay)
+
+        self.step += 1
+        if termination or truncation:
+            return True  # End the episode
+        return False  # Continue the episode
+
+    '''
+        DQN Optimization based on mini-batch
+    '''
+    def optimize(self, mini_batch, policy_dqn, target_dqn):
+        for state, action, reward, next_state, termination in mini_batch:
+            if termination:
+                target_q = reward
+            else:
+                with torch.no_grad():
+                    target_q = reward + self.discount_factor_g * target_dqn(next_state).max()
+            
+            current_q = policy_dqn(state)[action]
+
+            loss = self.loss_fn(current_q, target_q)
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
 '''
     PLACEHOLDERS FROM P4 FOR TESTING CLASS ENVIRONMENT
