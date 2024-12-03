@@ -4,13 +4,13 @@ import random
 import torch
 
 env = OurHexGame(board_size=11,sparse_flag=False,render_mode=None)
-env = OurHexGame(board_size=11,sparse_flag=True)
+#env = OurHexGame(board_size=11,sparse_flag=True)
 env.reset()
 
 # player 1
-gXXagent = G13Agent(env, 'hexgame1',is_training=False)
+gXXagent = G13Agent(env, 'hexgame1',is_training=True)
 # player 2
-gYYagent = G13Agent(env,'hexgame1',is_training=False)
+gYYagent = G13Agent(env,'hexgame1',is_training=True)
 
 smart_agent_player_id = random.choice(env.agents)
 episode_count = 10000
